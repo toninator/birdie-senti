@@ -6,62 +6,73 @@ from tweepy.streaming import StreamListener
 import time
 import auth_config
 import json
+import sys
 
 
 def load_list(fname):
-    with open(fname, "r") as f:
-        lst = f.read().split()
-    return lst
+    try:
+        with open(fname, "r") as f:
+            word_list = f.read().split()
+            word_list = map(lambda x: unicode(x, "utf-8"), word_list)
+        return word_list
+    except Exception as e:
+        print e
+        sys.exit(-1)
 
 
-def count_senti(txt, lst):
+def count_sentiment(tweet, word_list):
     total = 0
-    for x in txt.replace("#", "").split():
-        if x in lst:
+    for word in tweet.split():
+        # check if words are in positive or negative lists, also check words in tags
+        if word.replace("#", "") in word_list:
             total += 1
     return total
 
 
-def compare_tags(tag, txt, good, bad, good_tags, bad_tags):
-    if count_senti(txt, bad) == count_senti(txt, good):
-        pass
-    elif count_senti(txt, bad) > count_senti(txt, good):
-        bad_tags[tag] += 1
-    else:
-        good_tags[tag] += 1
+def emit_totals():
+    # print running totals
+    negative_tags = [key for key in negative_totals if negative_totals[key] == max(negative_totals.values())]
+    positive_tags = [key for key in positive_totals if positive_totals[key] == max(positive_totals.values())]
 
-    b_tags = [key for key in bad_tags if bad_tags[key] == max(bad_tags.values())]
-    g_tags = [key for key in good_tags if good_tags[key] == max(good_tags.values())]
-
-    positive = "Most Positive: %s (%d)" % (g_tags, max(good_tags.values()))
-    negative = "Most Negative: %s (%d)" % (b_tags, max(bad_tags.values()))
+    positive = "Most Positive: %s (%d)" % (positive_tags, max(positive_totals.values()))
+    negative = "Most Negative: %s (%d)" % (negative_tags, max(negative_totals.values()))
     print positive + ' ' + negative
 
 
-class MyListener(StreamListener):
-    """Custom StreamListener for streaming data."""
+def eval_sentiment_count(platform_tag, tweet, positive_word_list, negative_word_list):
+    # Compare if positive is great or negative is greater only if there's increment from previous state
+    if count_sentiment(tweet, negative_word_list) == count_sentiment(tweet, positive_word_list):
+        pass
+    elif count_sentiment(tweet, negative_word_list) > count_sentiment(tweet, positive_word_list):
+        negative_totals[platform_tag] += 1
+        emit_totals()
+    else:
+        positive_totals[platform_tag] += 1
+        emit_totals()
 
+
+class MyListener(StreamListener):
     def on_data(self, data):
         try:
-            # print data
             payload = json.loads(data)
-            txt = payload['text']
-            # print txt  # debug field
+            tweet = payload['text']
+            # print tweet # for debug
 
-            if "#Xbox".lower() in txt.lower() \
-                    and ("#Playstation".lower() not in txt.lower() or "#Switch".lower() not in txt.lower()):
-                compare_tags("#Xbox", txt, good, bad, good_tags, bad_tags)
+            # checks tweet if there's only 1 platform mentioned
+            if xbox.lower() in tweet.lower() \
+                    and (playstation.lower() not in tweet.lower() or switch.lower() not in tweet.lower()):
+                eval_sentiment_count(xbox, tweet, positive_words, negative_words)
+                return True
 
-            if "#Playstation".lower() in txt.lower() \
-                    and ("#Xbox".lower() not in txt.lower() or "#Switch".lower() not in txt.lower()):
-                compare_tags("#Playstation", txt, good, bad, good_tags, bad_tags)
+            if playstation.lower() in tweet.lower() \
+                    and (xbox.lower() not in tweet.lower() or switch.lower() not in tweet.lower()):
+                eval_sentiment_count(playstation, tweet, positive_words, negative_words)
+                return True
 
-            if "#Switch".lower() in txt.lower() \
-                    and ("#Xbox".lower() not in txt.lower() or "#Playstation".lower() not in txt.lower()):
-                compare_tags("#Switch", txt, good, bad, good_tags, bad_tags)
-
-            # print [key for key in bad_tags if bad_tags[key] == max(bad_tags.values()) and max(bad_tags.values()) != 0]
-            # print bad_tags.values()
+            if switch.lower() in tweet.lower() \
+                    and (xbox.lower() not in tweet.lower() or playstation.lower() not in tweet.lower()):
+                eval_sentiment_count(switch, tweet, positive_words, negative_words)
+                return True
 
         except BaseException as e:
             print("Error on_data: %s" % str(e))
@@ -74,28 +85,32 @@ class MyListener(StreamListener):
 
 
 if __name__ == '__main__':
+    # platform vars
+    xbox = '#Xbox'
+    playstation = '#Playstation'
+    switch = '#Switch'
 
     # Using keys from auth_config.py to authenticate with Twitter API
     auth = OAuthHandler(auth_config.consumer_key, auth_config.consumer_secret)
     auth.set_access_token(auth_config.access_token, auth_config.access_secret)
     api = tweepy.API(auth)
 
-    try:
-        bad = load_list('../data/negative-words.txt')
-        good = load_list('../data/positive-words.txt')
-    except Exception as e:
-        print e
+    # read file for positive and negative lists
+    negative_words = load_list('../data/negative-words.txt')
+    positive_words = load_list('../data/positive-words.txt')
 
-    bad_tags = dict()
-    bad_tags['#Xbox'] = 0
-    bad_tags['#Playstation'] = 0
-    bad_tags['#Switch'] = 0
+    # initialize running total dictionary
+    negative_totals = dict()
+    negative_totals[xbox] = 0
+    negative_totals[playstation] = 0
+    negative_totals[switch] = 0
 
-    good_tags = dict()
-    good_tags['#Xbox'] = 0
-    good_tags['#Playstation'] = 0
-    good_tags['#Switch'] = 0
+    positive_totals = dict()
+    positive_totals[xbox] = 0
+    positive_totals[playstation] = 0
+    positive_totals[switch] = 0
 
+    # use tweepy.StreamListener
     twitter_stream = Stream(auth, MyListener())
-    twitter_stream.filter(track=['#Xbox', '#Playstation', '#Switch'])
+    twitter_stream.filter(track=[xbox, playstation, switch])
 
